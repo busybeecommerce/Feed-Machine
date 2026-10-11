@@ -61,12 +61,12 @@ $feed_config = [
       'options' => ['STRIP_HTML', 'REMOVE_HTML_ENTITIES', 'STRIP_CRLF'],
                      ],
     'price' => [
-      'output' => 'FINAL_PRICE_WITHOUT_TAX',
-      'type' => 'KEYWORD'
+      'output' => 'FM_UF_google_price',
+      'type' => 'FUNCTION'
                ],
     'sale_price' => [
-      'output' => 'SPECIAL_PRICE',
-      'type' => 'KEYWORD'
+      'output' => 'FM_UF_google_sale_price',
+      'type' => 'FUNCTION'
                     ],
     'brand' => [
       'output' => 'manufacturers_name',
@@ -135,6 +135,39 @@ $feed_config = [
                ];
 
 //FEED FUNCTIONS BEGIN
+
+// Google text feeds require a tax-inclusive amount and an ISO currency code.
+function FM_UF_google_price(array $product, string $field = 'products_price'): string {
+  global $cur_feed, $currencies_info, $taxes;
+
+  $currency = $cur_feed['currency_code'];
+  $rate = $currencies_info[$currency]['value'] ?? null;
+  $amount = $product[$field] ?? null;
+  if( !preg_match('/^[A-Z]{3}$/', $currency) || !is_numeric($rate) || (float)$rate <= 0
+      || !is_numeric($amount) || (float)$amount < 0 ) {
+    throw new UnexpectedValueException('Invalid Google feed price or currency for product ' . ($product['products_id'] ?? 'unknown'));
+  }
+
+  $tax_rate = $taxes[$cur_feed['countries_iso_2']][$product['products_tax_class_id']] ?? 0;
+  $price = (float)$amount * (float)$rate * (1 + (float)$tax_rate / 100);
+  if( !is_finite($price) ) {
+    throw new UnexpectedValueException('Google feed price is not finite');
+  }
+  return number_format($price, 2, '.', '') . ' ' . $currency;
+}
+
+function FM_UF_google_sale_price(array $product): string {
+  if( empty($product['status']) || !isset($product['specials_new_products_price']) ) {
+    return '';
+  }
+  if( !is_numeric($product['specials_new_products_price']) || !is_numeric($product['products_price'] ?? null) ) {
+    throw new UnexpectedValueException('Invalid Google feed sale price');
+  }
+  if( (float)$product['specials_new_products_price'] >= (float)$product['products_price'] ) {
+    return '';
+  }
+  return FM_UF_google_price($product, 'specials_new_products_price');
+}
 
 /*
 The following include function (see explaination below) checks whether the product's quantity is greater than 0
